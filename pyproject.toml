@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "treasury-futures-workflows"
+version = "0.1.0"
+description = "Treasury-futures data pipeline and CICC close-session reversal research"
+requires-python = ">=3.10"
+dependencies = [
+  "duckdb",
+  "numpy",
+  "openpyxl",
+  "pandas",
+  "plotly",
+  "pyarrow",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,9 +1,11 @@
 """Backtest engine for the final nine close-session reversal factors."""
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+import duckdb
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -18,6 +20,26 @@ POST_OPEN_SWITCH: Final[pd.Timestamp] = pd.Timestamp("2020-07-20")
 ROUND_TRIP_COST_BP: Final[float] = 1.0
 WORKBOOK_SHEETS: Final[tuple[str, ...]] = ("trades", "factor_stats", "category_stats", "overall", "yearly", "dropped_signals")
 TRADE_COLUMNS: Final[list[str]] = ["factor_id", "signal_date", "trade_date", "roll_status", "block_signal", "entry_date", "exit_date", "hold_days", "direction", "entry_price", "exit_price", "pnl_price", "pnl_bp", "pnl_bp_net"]
+SAME_DAY_POSITION_COLUMNS: Final[list[str]] = [
+    "signal_date",
+    "trade_date",
+    "roll_status",
+    "block_signal",
+    "entry_date",
+    "exit_date",
+    "hold_days",
+    "direction",
+    "entry_price",
+    "exit_price",
+    "pnl_price",
+    "pnl_bp",
+    "pnl_bp_net",
+    "signal_count",
+    "factor_ids",
+    "display_names",
+    "categories",
+    "source_hold_days",
+]
 EXPECTED_FACTOR_IDS: Final[frozenset[str]] = frozenset(
     {
         "range_reversal_tval_hedge_h7",
@@ -74,6 +96,8 @@ class BacktestResult:
     dropped_signals: pd.DataFrame
     trading_calendar: pd.DatetimeIndex
     combined_figure: go.Figure
+    same_day_single_position_trades: pd.DataFrame
+    same_day_single_position_figure: go.Figure
 
 
 def run_backtest(package_dir: Path | None = None, signal_filter: SignalFilterConfig | None = None) -> BacktestResult:
@@ -106,6 +130,7 @@ def run_backtest(package_dir: Path | None = None, signal_filter: SignalFilterCon
     category_stats = _category_stats(trades)
     overall = _overall_stats(all_signals, signals, trades, dropped_signals)
     yearly = _yearly_stats(trades)
+    same_day_single_position_trades = _merge_same_day_trades(trades)
     _write_workbook(output_dir / BACKTEST_WORKBOOK, trades, factor_stats, category_stats, overall, yearly, dropped_signals)
     return BacktestResult(
         trades=trades,
@@ -116,6 +141,12 @@ def run_backtest(package_dir: Path | None = None, signal_filter: SignalFilterCon
         dropped_signals=dropped_signals,
         trading_calendar=pd.DatetimeIndex(segment_prices["trading_date"].drop_duplicates().sort_values()),
         combined_figure=_combined_figure(price_frame, trades),
+        same_day_single_position_trades=same_day_single_position_trades,
+        same_day_single_position_figure=_same_day_single_position_figure(
+            price_frame,
+            trades,
+            same_day_single_position_trades,
+        ),
     )
 
 
@@ -209,8 +240,31 @@ def _infer_vwap_amount_multiplier(minute: pd.DataFrame) -> tuple[float, float]:
     return multiplier, median_ratio
 
 
+def _read_parquet_compat(path: Path, label: str) -> pd.DataFrame:
+    """优先使用 Pandas；版本兼容错误时由 DuckDB 读取同一 Parquet。"""
+    try:
+        return pd.read_parquet(path).copy()
+    except OSError as pandas_error:
+        warnings.warn(
+            f"pandas could not read {label}; falling back to DuckDB: {pandas_error}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        try:
+            with duckdb.connect() as con:
+                return con.execute(
+                    "SELECT * FROM read_parquet(?)",
+                    [str(path)],
+                ).fetchdf()
+        except Exception as duckdb_error:
+            raise BacktestInputError(
+                f"cannot read {label} with pandas or DuckDB: "
+                f"pandas={pandas_error}; duckdb={duckdb_error}"
+            ) from duckdb_error
+
+
 def _load_minute(path: Path) -> pd.DataFrame:
-    minute = pd.read_parquet(path).copy()
+    minute = _read_parquet_compat(path, "validated minute parquet")
     if "vol" not in minute.columns and "volume" in minute.columns:
         minute["vol"] = minute["volume"]
     required = {"datetime", "trading_date", "amount", "vol", "adj_factor", "open_adj", "high_adj", "low_adj", "close_adj"}
@@ -230,7 +284,7 @@ def _load_minute(path: Path) -> pd.DataFrame:
 
 
 def _load_daily(path: Path) -> pd.DataFrame:
-    daily = pd.read_parquet(path).copy()
+    daily = _read_parquet_compat(path, "validated daily parquet")
     date_col = "trade_date" if "trade_date" in daily.columns else "trading_date"
     if date_col not in daily.columns or "close_adj" not in daily.columns:
         raise BacktestInputError("validated daily parquet missing trade_date/trading_date or close_adj")
@@ -371,6 +425,81 @@ def _portfolio_path(trades: pd.DataFrame) -> pd.DataFrame:
     out["cum_pnl_bp"] = out["pnl_bp_net"].cumsum()
     out["drawdown_bp"] = out["cum_pnl_bp"] - out["cum_pnl_bp"].cummax()
     return out
+
+
+def _merge_same_day_trades(trades: pd.DataFrame) -> pd.DataFrame:
+    """同一信号日只保留一份仓位，并使用该日信号中的最长持有期。"""
+    if trades.empty:
+        return pd.DataFrame(columns=SAME_DAY_POSITION_COLUMNS)
+
+    required = {
+        "signal_date",
+        "entry_date",
+        "exit_date",
+        "hold_days",
+        "direction",
+        "entry_price",
+        "factor_id",
+        "display_name",
+        "category",
+    }
+    missing = required.difference(trades.columns)
+    if missing:
+        raise BacktestInputError(
+            f"cannot merge same-day signals; trades missing columns: {sorted(missing)}"
+        )
+
+    rows: list[dict[str, object]] = []
+    for signal_date, group in trades.groupby("signal_date", sort=True):
+        if group["direction"].nunique(dropna=False) != 1:
+            raise BacktestInputError(
+                f"same-day signals contain conflicting directions: {pd.Timestamp(signal_date).date()}"
+            )
+        if group["entry_date"].nunique(dropna=False) != 1:
+            raise BacktestInputError(
+                f"same-day signals contain different entry dates: {pd.Timestamp(signal_date).date()}"
+            )
+        if group["entry_price"].nunique(dropna=False) != 1:
+            raise BacktestInputError(
+                f"same-day signals contain different entry prices: {pd.Timestamp(signal_date).date()}"
+            )
+
+        # 最大 hold_days 对应用户要求的最长持仓；若并列，则退出日和 factor_id
+        # 仅用于稳定选择同一笔等价交易。该交易的 pnl_bp_net 已只扣一次往返成本。
+        longest = group.sort_values(
+            ["hold_days", "exit_date", "factor_id"],
+            kind="stable",
+        ).iloc[-1]
+        rows.append(
+            {
+                "signal_date": longest["signal_date"],
+                "trade_date": longest["trade_date"],
+                "roll_status": longest["roll_status"],
+                "block_signal": bool(group["block_signal"].any()),
+                "entry_date": longest["entry_date"],
+                "exit_date": longest["exit_date"],
+                "hold_days": int(longest["hold_days"]),
+                "direction": int(longest["direction"]),
+                "entry_price": float(longest["entry_price"]),
+                "exit_price": float(longest["exit_price"]),
+                "pnl_price": float(longest["pnl_price"]),
+                "pnl_bp": float(longest["pnl_bp"]),
+                "pnl_bp_net": float(longest["pnl_bp_net"]),
+                "signal_count": int(len(group)),
+                "factor_ids": ", ".join(sorted(group["factor_id"].astype(str).unique())),
+                "display_names": "；".join(sorted(group["display_name"].astype(str).unique())),
+                "categories": "；".join(sorted(group["category"].astype(str).unique())),
+                "source_hold_days": ", ".join(
+                    str(value) for value in sorted(group["hold_days"].astype(int).unique())
+                ),
+            }
+        )
+
+    return (
+        pd.DataFrame(rows, columns=SAME_DAY_POSITION_COLUMNS)
+        .sort_values(["exit_date", "signal_date"])
+        .reset_index(drop=True)
+    )
 
 
 def _write_workbook(path: Path, trades: pd.DataFrame, factor_stats: pd.DataFrame, category_stats: pd.DataFrame, overall: pd.DataFrame, yearly: pd.DataFrame, dropped_signals: pd.DataFrame) -> None:
@@ -517,4 +646,204 @@ def _combined_figure(price_frame: pd.DataFrame, trades: pd.DataFrame) -> go.Figu
     fig.update_yaxes(title_text="bp", row=2, col=1)
     fig.update_yaxes(title_text="bp", row=3, col=1)
     fig.update_xaxes(showspikes=True, spikemode="across", spikesnap="cursor", spikedash="dot")
+    return fig
+
+
+def _exit_day_path(trades: pd.DataFrame) -> pd.DataFrame:
+    """按退出日确认净收益，生成与综合图一致的累积 PnL 和回撤路径。"""
+    if trades.empty:
+        return pd.DataFrame(columns=["exit_date", "pnl_bp_net", "cum_pnl_bp", "drawdown_bp"])
+    out = (
+        trades.groupby("exit_date", as_index=False)["pnl_bp_net"]
+        .sum()
+        .sort_values("exit_date")
+    )
+    out["cum_pnl_bp"] = out["pnl_bp_net"].cumsum()
+    out["drawdown_bp"] = out["cum_pnl_bp"] - out["cum_pnl_bp"].cummax()
+    return out
+
+
+def _same_day_single_position_figure(
+    price_frame: pd.DataFrame,
+    trades: pd.DataFrame,
+    merged_trades: pd.DataFrame,
+) -> go.Figure:
+    """展示同一信号日仅开一份仓、按最长信号持有时的组合表现。"""
+    plot_prices = price_frame[price_frame["trade_date"] >= POST_OPEN_SWITCH].copy()
+    plot_trades = trades[trades["signal_date"] >= POST_OPEN_SWITCH].copy()
+    plot_merged = merged_trades[
+        merged_trades["signal_date"] >= POST_OPEN_SWITCH
+    ].copy()
+    original_path = _exit_day_path(plot_trades)
+    merged_path = _exit_day_path(plot_merged)
+
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        row_heights=[0.45, 0.30, 0.25],
+        vertical_spacing=0.06,
+        subplot_titles=(
+            "T close_adj + 合并后的信号日",
+            "累积净 PnL 对比 (bp)",
+            "回撤对比 (bp)",
+        ),
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=plot_prices["trade_date"],
+            y=plot_prices["close_adj"],
+            mode="lines",
+            name="T close",
+            line={"color": "#444", "width": 1.2},
+            legendgroup="price",
+            hovertemplate="%{x|%Y-%m-%d}<br>close_adj=%{y:.3f}<extra>T close</extra>",
+        ),
+        row=1,
+        col=1,
+    )
+
+    daily_close = plot_prices.set_index("trade_date")["close_adj"]
+    merged_signal_prices = plot_merged["signal_date"].map(daily_close)
+    max_signal_count = (
+        max(1, int(plot_merged["signal_count"].max()))
+        if not plot_merged.empty
+        else 1
+    )
+    merged_hover = [
+        (
+            f"signal={row.signal_date:%Y-%m-%d}<br>"
+            f"同日信号={row.signal_count}<br>"
+            f"factor={row.factor_ids}<br>"
+            f"原持有期={row.source_hold_days}；采用={row.hold_days}<br>"
+            f"entry={row.entry_date:%Y-%m-%d}<br>"
+            f"exit={row.exit_date:%Y-%m-%d}<br>"
+            f"单份仓净收益={row.pnl_bp_net:+.1f} bp"
+        )
+        for row in plot_merged.itertuples(index=False)
+    ]
+    fig.add_trace(
+        go.Scatter(
+            x=plot_merged["signal_date"],
+            y=merged_signal_prices,
+            mode="markers",
+            name=f"合并后信号日 ({len(plot_merged)})",
+            marker={
+                "symbol": "diamond",
+                "size": [8 + 2 * min(int(count), 6) for count in plot_merged["signal_count"]],
+                "color": plot_merged["signal_count"],
+                "colorscale": "Viridis",
+                "cmin": 1,
+                "cmax": max_signal_count,
+                "showscale": True,
+                "colorbar": {"title": "同日<br>信号数", "len": 0.28, "y": 0.82},
+                "line": {"width": 0.7, "color": "#222"},
+            },
+            legendgroup="merged_signals",
+            hovertext=merged_hover,
+            hoverinfo="text",
+        ),
+        row=1,
+        col=1,
+    )
+
+    for roll_date in plot_prices.loc[
+        plot_prices["is_roll"].fillna(False), "trade_date"
+    ]:
+        fig.add_vline(
+            x=roll_date,
+            line={"color": "rgba(127,140,141,0.2)", "dash": "dot", "width": 0.8},
+            row=1,
+            col=1,
+        )
+
+    fig.add_trace(
+        go.Scatter(
+            x=original_path["exit_date"],
+            y=original_path["cum_pnl_bp"],
+            mode="lines",
+            name="原口径：每个信号一份仓",
+            line={"color": "#7f8c8d", "width": 1.2, "dash": "dash"},
+            legendgroup="original",
+            hovertemplate="%{x|%Y-%m-%d}<br>cum=%{y:+.1f} bp<extra>原口径</extra>",
+        ),
+        row=2,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=merged_path["exit_date"],
+            y=merged_path["cum_pnl_bp"],
+            mode="lines",
+            name="新口径：同日一份仓、最长持有",
+            line={"color": "#0072B2", "width": 2.0},
+            legendgroup="merged",
+            hovertemplate="%{x|%Y-%m-%d}<br>cum=%{y:+.1f} bp<extra>同日合并</extra>",
+        ),
+        row=2,
+        col=1,
+    )
+    fig.add_hline(y=0, line_dash="dot", line_color="gray", row=2, col=1)
+
+    fig.add_trace(
+        go.Scatter(
+            x=original_path["exit_date"],
+            y=original_path["drawdown_bp"],
+            mode="lines",
+            name="原口径回撤",
+            line={"color": "#7f8c8d", "width": 1.0, "dash": "dash"},
+            legendgroup="original",
+            hovertemplate="%{x|%Y-%m-%d}<br>drawdown=%{y:+.1f} bp<extra>原口径回撤</extra>",
+        ),
+        row=3,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=merged_path["exit_date"],
+            y=merged_path["drawdown_bp"],
+            mode="lines",
+            fill="tozeroy",
+            name="新口径回撤",
+            line={"color": "#D55E00", "width": 1.2},
+            fillcolor="rgba(213,94,0,0.22)",
+            legendgroup="merged",
+            hovertemplate="%{x|%Y-%m-%d}<br>drawdown=%{y:+.1f} bp<extra>同日合并回撤</extra>",
+        ),
+        row=3,
+        col=1,
+    )
+    fig.add_hline(y=0, line_dash="dot", line_color="gray", row=3, col=1)
+
+    multi_signal_days = int(plot_merged["signal_count"].gt(1).sum())
+    fig.update_layout(
+        title=(
+            "同日多信号合并为一份仓 — 价格/信号 · 累积 PnL 对比 · 回撤"
+            f"<br><sup>2020-07-20 以来：原始 {len(plot_trades)} 笔信号交易 → "
+            f"{len(plot_merged)} 份按日仓位；其中 {multi_signal_days} 个交易日发生多信号合并。"
+            "同日取最长持有期，往返成本只扣一次；不同信号日仍可重叠持仓。</sup>"
+        ),
+        template="plotly_white",
+        height=1200,
+        width=1600,
+        hovermode="x unified",
+        legend={
+            "orientation": "v",
+            "yanchor": "top",
+            "y": 1,
+            "xanchor": "left",
+            "x": 1.08,
+            "font": {"size": 10},
+        },
+        margin={"l": 100, "r": 360, "t": 115, "b": 50},
+    )
+    fig.update_yaxes(title_text="close_adj", row=1, col=1)
+    fig.update_yaxes(title_text="bp", row=2, col=1)
+    fig.update_yaxes(title_text="bp", row=3, col=1)
+    fig.update_xaxes(
+        showspikes=True,
+        spikemode="across",
+        spikesnap="cursor",
+        spikedash="dot",
+    )
     return fig

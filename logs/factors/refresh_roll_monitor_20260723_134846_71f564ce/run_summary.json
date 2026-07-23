@@ -1,0 +1,24 @@
+{
+  "status": "success",
+  "started_at": "2026-07-23T13:48:46.303251",
+  "finished_at": "2026-07-23T13:48:46.659426",
+  "db_path": "E:\\CodeBase\\TaiKangAM\\TreasuryFutures\\Factor\\notebooks\\CICC_CloseSession_Reverse\\CTreasuryFutures\\data\\database\\treasury_futures.duckdb",
+  "sql_path": "E:\\CodeBase\\TaiKangAM\\TreasuryFutures\\Factor\\notebooks\\CICC_CloseSession_Reverse\\CTreasuryFutures\\factors\\cicc_close_session_reverse\\sql\\roll_migration_monitor.sql",
+  "log_dir": "E:\\CodeBase\\TaiKangAM\\TreasuryFutures\\Factor\\notebooks\\CICC_CloseSession_Reverse\\CTreasuryFutures\\logs\\factors\\refresh_roll_monitor_20260723_134846_71f564ce",
+  "view_name": "v_roll_migration_monitor",
+  "rows": 2682,
+  "min_trade_date": "2015-06-30",
+  "max_trade_date": "2026-07-14",
+  "latest_status": "DATA_INCOMPLETE",
+  "latest_complete_date": "2026-07-13",
+  "blocked_rows": 432,
+  "incomplete_rows": 1,
+  "status_counts": {
+    "ACTIVE": 310,
+    "CROSSOVER": 77,
+    "DATA_INCOMPLETE": 1,
+    "NORMAL": 1953,
+    "SWITCH_DAY": 44,
+    "WATCH": 297
+  }
+}

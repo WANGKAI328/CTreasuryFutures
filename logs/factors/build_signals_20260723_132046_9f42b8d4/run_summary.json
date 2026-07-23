@@ -1,0 +1,13 @@
+{
+  "status": "success",
+  "started_at": "2026-07-23T13:20:46.016700",
+  "finished_at": "2026-07-23T13:22:09.869972",
+  "output_path": "E:\\CodeBase\\TaiKangAM\\TreasuryFutures\\Factor\\notebooks\\CICC_CloseSession_Reverse\\CTreasuryFutures\\factors\\cicc_close_session_reverse\\output\\final_9_category_signals.xlsx",
+  "log_dir": "E:\\CodeBase\\TaiKangAM\\TreasuryFutures\\Factor\\notebooks\\CICC_CloseSession_Reverse\\CTreasuryFutures\\logs\\factors\\build_signals_20260723_132046_9f42b8d4",
+  "signal_rows": 126,
+  "signal_dates": 69,
+  "factor_count": 9,
+  "blocked_signal_rows": 32,
+  "blocked_signal_dates": 15,
+  "missing_monitor_dates": 0
+}

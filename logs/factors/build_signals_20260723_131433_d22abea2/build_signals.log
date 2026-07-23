@@ -1,0 +1,49 @@
+2026-07-23 13:14:33 | INFO | 开始读取 validated 输入
+2026-07-23 13:14:35 | ERROR | 信号构建失败: validated_daily 无法读取: E:\CodeBase\TaiKangAM\TreasuryFutures\Factor\notebooks\CICC_CloseSession_Reverse\CTreasuryFutures\factors\cicc_close_session_reverse\working\validated_daily.parquet；最后错误: Repetition level histogram size mismatch
+Traceback (most recent call last):
+  File "E:\CodeBase\TaiKangAM\TreasuryFutures\Factor\notebooks\CICC_CloseSession_Reverse\CTreasuryFutures\src\factors\cicc_close_session_reverse\signal_builder.py", line 60, in read_parquet_with_retry
+    return pd.read_parquet(path)
+           ~~~~~~~~~~~~~~~^^^^^^
+  File "D:\Anaconda\Lib\site-packages\pandas\io\parquet.py", line 667, in read_parquet
+    return impl.read(
+           ~~~~~~~~~^
+        path,
+        ^^^^^
+    ...<6 lines>...
+        **kwargs,
+        ^^^^^^^^^
+    )
+    ^
+  File "D:\Anaconda\Lib\site-packages\pandas\io\parquet.py", line 274, in read
+    pa_table = self.api.parquet.read_table(
+        path_or_handle,
+    ...<3 lines>...
+        **kwargs,
+    )
+  File "D:\Anaconda\Lib\site-packages\pyarrow\parquet\core.py", line 1843, in read_table
+    return dataset.read(columns=columns, use_threads=use_threads,
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        use_pandas_metadata=use_pandas_metadata)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Anaconda\Lib\site-packages\pyarrow\parquet\core.py", line 1485, in read
+    table = self._dataset.to_table(
+        columns=columns, filter=self._filter_expression,
+        use_threads=use_threads
+    )
+  File "pyarrow\\_dataset.pyx", line 574, in pyarrow._dataset.Dataset.to_table
+  File "pyarrow\\_dataset.pyx", line 3865, in pyarrow._dataset.Scanner.to_table
+  File "pyarrow\\error.pxi", line 155, in pyarrow.lib.pyarrow_internal_check_status
+  File "pyarrow\\error.pxi", line 92, in pyarrow.lib.check_status
+OSError: Repetition level histogram size mismatch
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "E:\CodeBase\TaiKangAM\TreasuryFutures\Factor\notebooks\CICC_CloseSession_Reverse\CTreasuryFutures\src\factors\cicc_close_session_reverse\build_signals.py", line 321, in build_signal_workbook
+    daily, minute, events = load_inputs()
+                            ~~~~~~~~~~~^^
+  File "E:\CodeBase\TaiKangAM\TreasuryFutures\Factor\notebooks\CICC_CloseSession_Reverse\CTreasuryFutures\src\factors\cicc_close_session_reverse\signal_builder.py", line 89, in load_inputs
+    daily = read_parquet_with_retry(DAILY_PATH, "validated_daily")
+  File "E:\CodeBase\TaiKangAM\TreasuryFutures\Factor\notebooks\CICC_CloseSession_Reverse\CTreasuryFutures\src\factors\cicc_close_session_reverse\signal_builder.py", line 65, in read_parquet_with_retry
+    raise RuntimeError(f"{label} 无法读取: {path}；最后错误: {last_error}") from last_error
+RuntimeError: validated_daily 无法读取: E:\CodeBase\TaiKangAM\TreasuryFutures\Factor\notebooks\CICC_CloseSession_Reverse\CTreasuryFutures\factors\cicc_close_session_reverse\working\validated_daily.parquet；最后错误: Repetition level histogram size mismatch

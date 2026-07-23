@@ -8,7 +8,10 @@
 
 - 数据库文件：`data/database/treasury_futures.duckdb`
 - 数据对象：中金所 T 品种（Wind 品种代码 `T.CFE`）的合约目录、主力映射、日线和分钟线
-- 主要数据源：Wind；2019–2024 年的部分历史分钟线来自 `data/input/T_mindf.csv`
+- 主要数据源：Wind；2019–2024 年的部分历史分钟线来自 `data/csv/T_mindf.csv`
+- 数据进入规则：Wind 和手工输入必须先标准化到 `data/csv/`，DuckDB 只从 CSV 增量同步
+- 日常重叠：日线回溯最近 5 个交易日，分钟线回溯最近 2 个交易日后去重覆盖
+- 备份与审计：写库前备份到 `data/backups/duckdb/`，运行日志写入 `logs/datapipeline/`
 - 数据分层：合约参照数据 → 原始分合约行情 → 未复权主力连续行情 → 复权视图和移仓监控视图
 - 当前文件大小：约 113.5 MiB（磁盘文件约 119 MB）
 - 数据库版本：当前快照由 DuckDB 1.5.4 正常只读打开
@@ -32,7 +35,9 @@
 ```mermaid
 flowchart LR
     Wind["Wind: futurecc / trade_hiscode / 日线 / 分钟线"]
-    CSV["历史分钟 CSV: T_mindf.csv"]
+    History["历史分钟 CSV: T_mindf.csv"]
+    RawEco["手工月度经济日历 Excel"]
+    CSV["标准 CSV 层: reference / daily / minute"]
 
     C["contracts\n合约目录"]
     M["main_contract_mapping\n逐日主力映射"]
@@ -48,10 +53,12 @@ flowchart LR
     R["main_contract_rolls"]
     RM["v_roll_migration_monitor"]
 
-    Wind --> C
-    Wind --> M
-    Wind --> D
-    Wind --> I
+    Wind --> CSV
+    History --> CSV
+    RawEco --> CSV
+    CSV --> C
+    CSV --> M
+    CSV --> D
     CSV --> I
 
     M --> MD
@@ -317,7 +324,7 @@ AND c.trade_date BETWEEN f.segment_start AND f.segment_end
 ```python
 import duckdb
 
-from treasury_futures.paths import DB_PATH
+from datapipeline.paths import DB_PATH
 
 with duckdb.connect(str(DB_PATH), read_only=True) as con:
     latest_daily = con.execute(
@@ -337,7 +344,7 @@ with duckdb.connect(str(DB_PATH), read_only=True) as con:
 python -m pip install -e .
 ```
 
-也可以直接传入数据库文件的绝对路径，但共享代码中优先使用 `treasury_futures.paths.DB_PATH`，避免路径在 Notebook 之间漂移。
+也可以直接传入数据库文件的绝对路径，但共享代码中优先使用 `datapipeline.paths.DB_PATH`，避免路径在 Notebook 之间漂移。
 
 ### 8.2 查询某个具体合约的日线
 
@@ -411,20 +418,20 @@ SELECT
 
 ### 9.1 日常增量更新
 
-入口 Notebook：`notebooks/data_pipeline/01_TreasuryFutures.ipynb`
+入口 Notebook：`notebooks/datapipeline/CSV_First_Data_Pipeline.ipynb`
 
 1. 从项目根目录启动 Jupyter；
-2. 在 Notebook 中将 `RUN_INCREMENTAL_UPDATE = True`；
-3. 运行增量更新单元；
-4. 流程会刷新近期合约目录和主力映射、增量抓取日线和分钟线、重建连续表，并重算复权因子及复权视图；
-5. 检查各函数返回的更新摘要和最后几行数据；
-6. 完成后执行 `con.close()`，释放数据库连接。
+2. 在 Notebook 中只将 `RUN_INCREMENTAL_UPDATE = True`；
+3. 流程先更新 reference/daily/minute CSV，其中日线回溯 5 个交易日、分钟线回溯 2 个交易日；
+4. 写库前自动创建可只读验证的时间戳备份；
+5. DuckDB 仅删除并重写本次变化的合约区间，连续表也只重建受影响日期；
+6. 检查 `logs/datapipeline/<run_id>/` 中的逐合约摘要和 `run_summary.json`。
 
-WindPy 由 Wind 终端环境提供，不在 `pyproject.toml` 中安装。首次建库和历史 CSV 导入流程也保存在同一个 Notebook 中，但不应在日常更新时随意打开 `RUN_FULL_UPDATE`。
+WindPy 由 Wind 终端环境提供，不在 `pyproject.toml` 中安装。首次建库使用同一 Notebook 的 `RUN_FULL_INITIALIZATION`，其中 `T_mindf.csv` 只负责历史分钟初始化；不要在日常更新时打开全量开关。
 
 ### 9.2 刷新移仓监控视图
 
-入口 Notebook：`factors/cicc_close_session_reverse/notebooks/02_Roll_Migration_Monitor.ipynb`
+入口 Notebook：`notebooks/factors/Roll_Migration_Monitor.ipynb`
 
 该 Notebook 使用 `factors/cicc_close_session_reverse/sql/roll_migration_monitor.sql` 创建或刷新 `v_roll_migration_monitor`。如果研究代码提示该视图不存在，应先运行此 Notebook。
 

@@ -1,0 +1,4 @@
+2026-07-23 13:49:05 | INFO | 开始刷新移仓监控: E:\CodeBase\TaiKangAM\TreasuryFutures\Factor\notebooks\CICC_CloseSession_Reverse\CTreasuryFutures\data\database\treasury_futures.duckdb
+2026-07-23 13:49:05 | WARNING | 存在数据不完整交易日: 1；这些日期将按 fail-safe 屏蔽信号
+2026-07-23 13:49:05 | INFO | 刷新完成: rows=2682, range=2015-06-30..2026-07-14, latest_status=DATA_INCOMPLETE
+2026-07-23 13:49:05 | INFO | 质量摘要: latest_complete=2026-07-13, blocked=432, statuses={'ACTIVE': 310, 'CROSSOVER': 77, 'DATA_INCOMPLETE': 1, 'NORMAL': 1953, 'SWITCH_DAY': 44, 'WATCH': 297}

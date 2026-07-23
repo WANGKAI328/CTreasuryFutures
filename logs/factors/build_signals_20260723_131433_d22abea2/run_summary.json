@@ -1,0 +1,9 @@
+{
+  "status": "error",
+  "started_at": "2026-07-23T13:14:33.421816",
+  "finished_at": "2026-07-23T13:14:35.690140",
+  "output_path": "E:\\CodeBase\\TaiKangAM\\TreasuryFutures\\Factor\\notebooks\\CICC_CloseSession_Reverse\\CTreasuryFutures\\factors\\cicc_close_session_reverse\\output\\final_9_category_signals.xlsx",
+  "log_dir": "E:\\CodeBase\\TaiKangAM\\TreasuryFutures\\Factor\\notebooks\\CICC_CloseSession_Reverse\\CTreasuryFutures\\logs\\factors\\build_signals_20260723_131433_d22abea2",
+  "error_type": "RuntimeError",
+  "error": "validated_daily 无法读取: E:\\CodeBase\\TaiKangAM\\TreasuryFutures\\Factor\\notebooks\\CICC_CloseSession_Reverse\\CTreasuryFutures\\factors\\cicc_close_session_reverse\\working\\validated_daily.parquet；最后错误: Repetition level histogram size mismatch"
+}

@@ -1,0 +1,7 @@
+2026-07-23 13:20:46 | INFO | 开始读取 validated 输入
+2026-07-23 13:20:47 | INFO | 输入读取完成: daily=2681, minute=472551, events=1208
+2026-07-23 13:20:47 | INFO | 开始计算分钟分段、反转、持仓和事件特征
+2026-07-23 13:22:09 | INFO | 特征计算完成: feature_rows=1824, threshold_rows=3617
+2026-07-23 13:22:09 | INFO | 开始写出 Excel: E:\CodeBase\TaiKangAM\TreasuryFutures\Factor\notebooks\CICC_CloseSession_Reverse\CTreasuryFutures\factors\cicc_close_session_reverse\output\final_9_category_signals.xlsx
+2026-07-23 13:22:09 | INFO | 信号构建完成: rows=126, dates=69, factors=9
+2026-07-23 13:22:09 | INFO | 移仓监控: blocked_rows=32, blocked_dates=15, missing_dates=0
